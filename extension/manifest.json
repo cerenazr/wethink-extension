@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "WeThink Extension",
+  "version": "0.1.0",
+  "description": "Side panel MVP for content extraction and settings.",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.anthropic.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "action": {
+    "default_title": "Open Panel"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WeThink Panel</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Trebuchet MS", Arial, sans-serif;
+        background: #f7f7f5;
+        color: #1f2328;
+      }
+
+      header {
+        padding: 12px 16px;
+        background: #1f2328;
+        color: #f7f7f5;
+        font-size: 14px;
+        letter-spacing: 0.3px;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        padding: 12px 16px 0;
+        background: #f7f7f5;
+      }
+
+      .tab {
+        border: 1px solid #c9c9c3;
+        background: #ffffff;
+        color: #1f2328;
+        padding: 6px 10px;
+        cursor: pointer;
+        font-size: 13px;
+        border-radius: 6px;
+      }
+
+      .tab.active {
+        background: #1f2328;
+        color: #f7f7f5;
+        border-color: #1f2328;
+      }
+
+      .panel {
+        display: none;
+        padding: 16px;
+      }
+
+      .panel.active {
+        display: block;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: none;
+        background: #1f2328;
+        color: #f7f7f5;
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      button.secondary {
+        background: #d7d7d1;
+        color: #1f2328;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        margin-bottom: 6px;
+        color: #3b4046;
+      }
+
+      input,
+      select {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 6px;
+        border: 1px solid #c9c9c3;
+        background: #ffffff;
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+
+      .field {
+        margin-bottom: 12px;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .row input {
+        flex: 1;
+      }
+
+      .muted {
+        font-size: 11px;
+        color: #6f7680;
+      }
+
+      .status {
+        font-size: 12px;
+        color: #3b4046;
+      }
+
+      .result {
+        border: 1px solid #c9c9c3;
+        background: #ffffff;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+      }
+
+      .result h2 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+
+      .result-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      .preview {
+        white-space: pre-wrap;
+        font-size: 12px;
+        color: #3b4046;
+      }
+
+      .snippets {
+        margin: 8px 0 0 18px;
+        padding: 0;
+        font-size: 12px;
+        color: #3b4046;
+      }
+
+      .snippets li {
+        margin-bottom: 6px;
+      }
+
+      .warning {
+        font-size: 11px;
+        color: #7a4b2a;
+        background: #fff2e8;
+        padding: 8px 10px;
+        border-radius: 6px;
+        margin-bottom: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>WeThink Side Panel</header>
+    <div class="tabs">
+      <button class="tab active" data-tab="chat">Chat/Summary</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </div>
+
+    <section class="panel active" id="panel-chat">
+      <div class="actions">
+        <button id="extractBtn">Extract Page</button>
+        <span class="status" id="statusLine">Ready.</span>
+      </div>
+
+      <div class="actions">
+        <button id="summaryShort">Summarize Short</button>
+        <button id="summaryMedium">Summarize Medium</button>
+        <button id="summaryDetailed">Summarize Detailed</button>
+      </div>
+
+      <div class="field">
+        <label for="qaInput">Ask a question</label>
+        <div class="row">
+          <input id="qaInput" type="text" placeholder="Ask about this page">
+          <button id="qaSend">Send</button>
+        </div>
+      </div>
+
+      <div class="warning" id="providerWarning">
+        Page content will be sent to Gemini.
+      </div>
+
+      <div class="result">
+        <h2>Latest extraction</h2>
+        <div class="result-title" id="resultTitle">No page extracted.</div>
+        <div class="preview" id="resultPreview">Preview will appear here.</div>
+      </div>
+
+      <div class="result">
+        <h2>LLM response</h2>
+        <div class="preview" id="llmResultText">No response yet.</div>
+        <details class="muted" id="llmDebug" hidden>
+          <summary>Provider details</summary>
+          <div id="llmDebugText"></div>
+        </details>
+        <ul class="snippets" id="snippetList"></ul>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-settings">
+      <div class="field">
+        <label for="providerSelect">Active provider</label>
+        <select id="providerSelect">
+          <option value="gemini">Gemini</option>
+          <option value="claude">Claude</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="geminiKey">Gemini API key</label>
+        <div class="row">
+          <input id="geminiKey" type="password" placeholder="Enter Gemini key">
+          <button class="secondary" id="deleteGeminiKey">Delete</button>
+        </div>
+        <div class="muted" id="geminiKeyStatus">Not set.</div>
+      </div>
+
+      <div class="field">
+        <label for="claudeKey">Claude API key</label>
+        <div class="row">
+          <input id="claudeKey" type="password" placeholder="Enter Claude key">
+          <button class="secondary" id="deleteClaudeKey">Delete</button>
+        </div>
+        <div class="muted" id="claudeKeyStatus">Not set.</div>
+      </div>
+
+      <div class="field">
+        <label for="summaryDefault">Default summary length</label>
+        <select id="summaryDefault">
+          <option value="short">Short</option>
+          <option value="medium">Medium</option>
+          <option value="detailed">Detailed</option>
+        </select>
+      </div>
+
+      <div class="actions">
+        <button id="saveSettings">Save Settings</button>
+        <span class="status" id="settingsStatus">Waiting for changes.</span>
+      </div>
+    </section>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
