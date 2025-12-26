@@ -9,6 +9,8 @@ const SNIPPET_MIN = 2;
 const SNIPPET_MAX = 5;
 const ERROR_SNIPPET_MAX = 300;
 const REQUEST_TIMEOUT_MS = 20000;
+const CHUNK_THRESHOLD_CHARS = 10000;
+const CHUNK_SIZE_CHARS = 6000;
 
 const SUMMARY_PROMPTS = {
   short: "Summarize in 5 bullet points. Then provide 2-5 short quotes/snippets from the page supporting the summary.",
@@ -17,6 +19,8 @@ const SUMMARY_PROMPTS = {
 };
 const QA_PROMPT =
   "Answer using ONLY the page content. If not found, say so. Then provide 2-5 supporting snippets.";
+
+const extractionCache = new Map();
 
 class LLMError extends Error {
   constructor(message, status, debug) {
@@ -85,6 +89,22 @@ function safeErrorSnippet(text) {
   return text.replace(/\s+/g, " ").trim().slice(0, ERROR_SNIPPET_MAX);
 }
 
+function getCachedPage(tabId, url) {
+  const entry = extractionCache.get(tabId);
+  if (!entry) {
+    return null;
+  }
+  if (entry.url !== url) {
+    extractionCache.delete(tabId);
+    return null;
+  }
+  return entry.page;
+}
+
+function setCachedPage(tabId, url, page) {
+  extractionCache.set(tabId, { url, page });
+}
+
 function generateSnippets(page) {
   const snippets = [];
   const seen = new Set();
@@ -126,7 +146,54 @@ function generateSnippets(page) {
   return snippets.slice(0, Math.min(SNIPPET_MAX, Math.max(SNIPPET_MIN, snippets.length)));
 }
 
-async function extractPage({ notifyPanel }) {
+function chunkText(text, maxLength) {
+  const cleaned = (text || "").trim();
+  if (!cleaned) {
+    return [];
+  }
+  const paragraphs = cleaned
+    .split(/\n+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const chunks = [];
+  let current = "";
+
+  const flush = () => {
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+  };
+
+  const addSegment = (segment) => {
+    if (!segment) {
+      return;
+    }
+    if (segment.length > maxLength) {
+      flush();
+      for (let i = 0; i < segment.length; i += maxLength) {
+        chunks.push(segment.slice(i, i + maxLength));
+      }
+      return;
+    }
+    if (!current) {
+      current = segment;
+      return;
+    }
+    if (current.length + segment.length + 2 <= maxLength) {
+      current = `${current}\n\n${segment}`;
+    } else {
+      flush();
+      current = segment;
+    }
+  };
+
+  paragraphs.forEach(addSegment);
+  flush();
+  return chunks;
+}
+
+async function extractPage({ notifyPanel, force }) {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id) {
     const message = "No active tab found.";
@@ -151,6 +218,16 @@ async function extractPage({ notifyPanel }) {
     return { error: message };
   }
 
+  if (!force) {
+    const cachedPage = getCachedPage(tab.id, url);
+    if (cachedPage) {
+      if (notifyPanel) {
+        await chrome.runtime.sendMessage({ type: "EXTRACT_RESULT", page: cachedPage });
+      }
+      return { page: cachedPage, cached: true };
+    }
+  }
+
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -159,6 +236,7 @@ async function extractPage({ notifyPanel }) {
 
     const response = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_CONTENT" });
     if (response && response.type === "EXTRACT_RESULT" && response.page) {
+      setCachedPage(tab.id, url, response.page);
       if (notifyPanel) {
         await chrome.runtime.sendMessage(response);
       }
@@ -186,8 +264,36 @@ function buildSummaryPrompt(textContent, summaryLength) {
   return `${prompt}\n\nPage content:\n${textContent}`;
 }
 
+function buildChunkSummaryPrompt(textContent) {
+  return "Summarize this section in 3-5 bullet points.\n\nSection:\n" + textContent;
+}
+
+function buildFinalSummaryPrompt(chunkSummaries, summaryLength) {
+  const prompt = SUMMARY_PROMPTS[summaryLength] || SUMMARY_PROMPTS.short;
+  return `${prompt}\n\nSummaries of sections:\n${chunkSummaries}`;
+}
+
 function buildQaPrompt(textContent, userQuery) {
   return `${QA_PROMPT}\n\nUser question:\n${userQuery}\n\nPage content:\n${textContent}`;
+}
+
+function buildSelectionSummaryPrompt(textContent, summaryLength) {
+  const prompt = SUMMARY_PROMPTS[summaryLength] || SUMMARY_PROMPTS.short;
+  return `Use only the provided selection.\n${prompt}\n\nSelection:\n${textContent}`;
+}
+
+function buildSelectionChunkSummaryPrompt(textContent) {
+  return "Use only the provided selection.\nSummarize this section in 3-5 bullet points.\n\nSelection section:\n"
+    + textContent;
+}
+
+function buildSelectionFinalSummaryPrompt(chunkSummaries, summaryLength) {
+  const prompt = SUMMARY_PROMPTS[summaryLength] || SUMMARY_PROMPTS.short;
+  return `Use only the provided selection.\n${prompt}\n\nSelection summaries:\n${chunkSummaries}`;
+}
+
+function buildSelectionQaPrompt(textContent, userQuery) {
+  return `Use only the provided selection.\n${QA_PROMPT}\n\nUser question:\n${userQuery}\n\nSelection:\n${textContent}`;
 }
 
 function parseGeminiText(data) {
@@ -226,6 +332,39 @@ function parseClaudeText(data) {
     return text;
   }
   return data && data.completion ? data.completion : "";
+}
+
+function buildLlmErrorPayload(error, provider) {
+  let messageText = error.message || "Provider error";
+  let status = error.status;
+  const debug = error.debug;
+  if (status === 401 || status === 403) {
+    messageText = "Invalid API key";
+  } else if (status === 429) {
+    messageText = "Rate limit exceeded";
+  } else if (messageText === "Request timed out") {
+    messageText = "Request timed out";
+  } else if (messageText === "Provider error" && typeof status === "number") {
+    messageText = "Provider error";
+  }
+
+  const statusLabel = typeof status === "number" ? status : "no-status";
+  console.warn(`LLM failed: ${provider} (${statusLabel})`);
+  return { messageText, status, debug };
+}
+
+async function sendLlmError(error, provider) {
+  const payload = buildLlmErrorPayload(error, provider);
+  await chrome.runtime.sendMessage({
+    type: "LLM_ERROR",
+    message: payload.messageText,
+    status: payload.status,
+    debug: payload.debug || undefined
+  });
+}
+
+async function sendLlmProgress(message) {
+  await chrome.runtime.sendMessage({ type: "LLM_PROGRESS", message });
 }
 
 async function callLLM({ provider, prompt, settings }) {
@@ -322,13 +461,38 @@ async function callLLM({ provider, prompt, settings }) {
 async function handleLLMRequest(message) {
   const settings = await getSettings();
   const provider = message.provider || settings.activeProvider;
-  const { page, error } = await extractPage({ notifyPanel: true });
-  if (!page) {
-    await chrome.runtime.sendMessage({
-      type: "LLM_ERROR",
-      message: error || "Unable to extract content from this page."
-    });
-    return;
+  const source = message.source === "selection" ? "selection" : "page";
+  let page = null;
+  let error = null;
+
+  if (source === "selection") {
+    const selectionText = (message.selectionText || "").trim();
+    if (!selectionText) {
+      await chrome.runtime.sendMessage({ type: "LLM_ERROR", message: "Missing selection." });
+      return;
+    }
+    page = {
+      url: message.url || "",
+      title: message.title || "Selection",
+      textContent: selectionText,
+      excerpt: selectionText.slice(0, 200) || undefined,
+      lang: undefined,
+      timestamp: Date.now(),
+      hash: "selection",
+      truncated: false,
+      rawLength: selectionText.length
+    };
+  } else {
+    const extracted = await extractPage({ notifyPanel: true });
+    page = extracted.page;
+    error = extracted.error;
+    if (!page) {
+      await chrome.runtime.sendMessage({
+        type: "LLM_ERROR",
+        message: error || "Unable to extract content from this page."
+      });
+      return;
+    }
   }
 
   const key =
@@ -351,10 +515,63 @@ async function handleLLMRequest(message) {
     mode === "summary"
       ? message.summaryLength || settings.summaryDefault || DEFAULT_SETTINGS.summaryDefault
       : null;
+  const textContent = page.textContent || "";
+
+  if (mode === "summary" && textContent.length > CHUNK_THRESHOLD_CHARS) {
+    const chunks = chunkText(textContent, CHUNK_SIZE_CHARS);
+    const chunkSummaries = [];
+    for (let i = 0; i < chunks.length; i += 1) {
+      try {
+        await sendLlmProgress(`Summarizing chunk ${i + 1}/${chunks.length}...`);
+        const result = await callLLM({
+          provider,
+          prompt: source === "selection"
+            ? buildSelectionChunkSummaryPrompt(chunks[i])
+            : buildChunkSummaryPrompt(chunks[i]),
+          settings: { ...settings, [provider + "Key"]: key }
+        });
+        chunkSummaries.push(result.text);
+      } catch (error) {
+        await sendLlmError(error, provider);
+        return;
+      }
+    }
+
+    try {
+      await sendLlmProgress("Combining chunk summaries...");
+      const finalPrompt = source === "selection"
+        ? buildSelectionFinalSummaryPrompt(chunkSummaries.join("\n\n"), summaryLength)
+        : buildFinalSummaryPrompt(chunkSummaries.join("\n\n"), summaryLength);
+      const result = await callLLM({
+        provider,
+        prompt: finalPrompt,
+        settings: { ...settings, [provider + "Key"]: key }
+      });
+      const snippets = generateSnippets(page);
+      await chrome.runtime.sendMessage({
+        type: "LLM_RESULT",
+        resultText: result.text,
+        snippets,
+        meta: {
+          provider,
+          mode,
+          truncated: !!page.truncated
+        }
+      });
+    } catch (error) {
+      await sendLlmError(error, provider);
+    }
+    return;
+  }
+
   const prompt =
     mode === "summary"
-      ? buildSummaryPrompt(page.textContent || "", summaryLength)
-      : buildQaPrompt(page.textContent || "", message.userQuery.trim());
+      ? source === "selection"
+        ? buildSelectionSummaryPrompt(textContent, summaryLength)
+        : buildSummaryPrompt(textContent, summaryLength)
+      : source === "selection"
+        ? buildSelectionQaPrompt(textContent, message.userQuery.trim())
+        : buildQaPrompt(textContent, message.userQuery.trim());
 
   try {
     const result = await callLLM({ provider, prompt, settings: { ...settings, [provider + "Key"]: key } });
@@ -370,32 +587,18 @@ async function handleLLMRequest(message) {
       }
     });
   } catch (error) {
-    let messageText = error.message || "Provider error";
-    let status = error.status;
-    const debug = error.debug;
-    if (status === 401 || status === 403) {
-      messageText = "Invalid API key";
-    } else if (status === 429) {
-      messageText = "Rate limit exceeded";
-    } else if (messageText === "Request timed out") {
-      messageText = "Request timed out";
-    } else if (messageText === "Provider error" && typeof status === "number") {
-      messageText = "Provider error";
-    }
-
-    const statusLabel = typeof status === "number" ? status : "no-status";
-    console.warn(`LLM failed: ${provider} (${statusLabel})`);
-
-    await chrome.runtime.sendMessage({
-      type: "LLM_ERROR",
-      message: messageText,
-      status,
-      debug: debug || undefined
-    });
+    await sendLlmError(error, provider);
   }
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+async function ensureContentScript(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) {
     return;
   }
@@ -416,11 +619,66 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "EXTRACT_CONTENT") {
-    void extractPage({ notifyPanel: true });
+    void extractPage({ notifyPanel: true, force: Boolean(message.force) });
     return;
   }
 
   if (message.type === "LLM_REQUEST") {
     void handleLLMRequest(message);
+    return;
   }
+
+  if (message.type === "WETHINK_FETCH_SELECTION") {
+    void (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (!tab || !tab.id) {
+          throw new Error("No active tab found.");
+        }
+        await ensureContentScript(tab.id);
+        const response = await chrome.tabs.sendMessage(tab.id, { type: "WETHINK_GET_SELECTION" });
+        const selectionText = response && response.selectionText ? response.selectionText : "";
+        sendResponse({ selectionText });
+      } catch (error) {
+        const messageText = error && error.message ? error.message : "Selection fetch failed.";
+        sendResponse({ selectionText: "", error: messageText });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "WETHINK_SELECTION_CHANGED") {
+    if (sender && sender.tab) {
+      chrome.runtime.sendMessage({
+        type: "WETHINK_SELECTION_CHANGED",
+        selectionText: message.selectionText || ""
+      });
+    }
+    return;
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) {
+    extractionCache.delete(tabId);
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  extractionCache.delete(tabId);
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  void (async () => {
+    try {
+      const windowId = typeof tab.windowId === "number"
+        ? tab.windowId
+        : (await chrome.windows.getCurrent()).id;
+      if (typeof windowId === "number") {
+        await chrome.sidePanel.open({ windowId });
+      }
+    } catch (error) {
+      console.error("Failed to open side panel.", error);
+    }
+  })();
 });

@@ -6,45 +6,145 @@
     <title>WeThink Panel</title>
     <style>
       :root {
-        color-scheme: light;
+        color-scheme: light dark;
+        --bg: #f4f1ec;
+        --surface: #ffffff;
+        --surface-alt: #f0ede7;
+        --text: #161b22;
+        --muted: #586171;
+        --accent: #0f766e;
+        --accent-strong: #0a4b45;
+        --accent-soft: rgba(15, 118, 110, 0.15);
+        --border: rgba(15, 23, 42, 0.12);
+        --header-bg: #111827;
+        --header-text: #f9fafb;
+        --button-bg: linear-gradient(140deg, #0f766e, #0b4f4a);
+        --button-text: #f8fafc;
+        --button-secondary-bg: #e6e2da;
+        --button-secondary-text: #1f2937;
+        --warning-bg: #fff0e1;
+        --warning-text: #8a4c1f;
+        --radius-sm: 8px;
+        --radius-md: 14px;
+        --shadow-soft: 0 20px 40px rgba(15, 23, 42, 0.12);
+        --shadow-small: 0 8px 16px rgba(15, 23, 42, 0.08);
+        --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.25);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0c0f14;
+          --surface: #141821;
+          --surface-alt: #11151d;
+          --text: #f1f5f9;
+          --muted: #a6b0be;
+          --accent: #2dd4bf;
+          --accent-strong: #0f766e;
+          --accent-soft: rgba(45, 212, 191, 0.18);
+          --border: rgba(148, 163, 184, 0.18);
+          --header-bg: #0b1018;
+          --header-text: #f8fafc;
+          --button-bg: linear-gradient(140deg, #2dd4bf, #0f766e);
+          --button-text: #041b1a;
+          --button-secondary-bg: #1f2833;
+          --button-secondary-text: #e2e8f0;
+          --warning-bg: #2a1f14;
+          --warning-text: #f7d6a4;
+          --shadow-soft: 0 24px 48px rgba(0, 0, 0, 0.45);
+          --shadow-small: 0 10px 20px rgba(0, 0, 0, 0.35);
+          --focus-ring: 0 0 0 3px rgba(45, 212, 191, 0.25);
+        }
       }
 
       body {
         margin: 0;
-        font-family: "Trebuchet MS", Arial, sans-serif;
-        background: #f7f7f5;
-        color: #1f2328;
+        font-family: "Avenir Next", "Avenir", "Gill Sans", "Trebuchet MS", sans-serif;
+        background: radial-gradient(circle at 20% 0%, rgba(15, 118, 110, 0.08), transparent 55%),
+          radial-gradient(circle at 90% 20%, rgba(250, 204, 21, 0.08), transparent 45%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.5)) var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: linear-gradient(120deg, rgba(255, 255, 255, 0.15), transparent 60%);
+        pointer-events: none;
+        z-index: 0;
       }
 
       header {
-        padding: 12px 16px;
-        background: #1f2328;
-        color: #f7f7f5;
-        font-size: 14px;
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        padding: 14px 16px;
+        background: var(--header-bg);
+        color: var(--header-text);
+        font-size: 15px;
+        letter-spacing: 0.4px;
+        box-shadow: var(--shadow-small);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+      }
+
+      .brand-badge {
+        font-size: 10px;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(248, 250, 252, 0.15);
+        border: 1px solid rgba(248, 250, 252, 0.2);
+      }
+
+      .header-sub {
+        font-size: 12px;
+        color: rgba(248, 250, 252, 0.7);
         letter-spacing: 0.3px;
+      }
+
+      .shell {
+        position: relative;
+        z-index: 1;
       }
 
       .tabs {
         display: flex;
         gap: 8px;
         padding: 12px 16px 0;
-        background: #f7f7f5;
+        background: transparent;
+        position: sticky;
+        top: 52px;
+        z-index: 2;
       }
 
       .tab {
-        border: 1px solid #c9c9c3;
-        background: #ffffff;
-        color: #1f2328;
-        padding: 6px 10px;
+        border: 1px solid transparent;
+        background: var(--surface);
+        color: var(--text);
+        padding: 8px 12px;
         cursor: pointer;
         font-size: 13px;
-        border-radius: 6px;
+        border-radius: 999px;
+        box-shadow: var(--shadow-small);
+        transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease;
       }
 
       .tab.active {
-        background: #1f2328;
-        color: #f7f7f5;
-        border-color: #1f2328;
+        background: var(--button-bg);
+        color: var(--button-text);
+        border-color: transparent;
+        box-shadow: var(--shadow-soft);
       }
 
       .panel {
@@ -54,6 +154,7 @@
 
       .panel.active {
         display: block;
+        animation: panelIn 0.4s ease;
       }
 
       .actions {
@@ -66,44 +167,55 @@
 
       button {
         border: none;
-        background: #1f2328;
-        color: #f7f7f5;
-        padding: 8px 12px;
-        border-radius: 6px;
+        background: var(--button-bg);
+        color: var(--button-text);
+        padding: 9px 14px;
+        border-radius: 999px;
         cursor: pointer;
         font-size: 13px;
+        font-weight: 600;
+        box-shadow: var(--shadow-small);
+        transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
       }
 
       button.secondary {
-        background: #d7d7d1;
-        color: #1f2328;
+        background: var(--button-secondary-bg);
+        color: var(--button-secondary-text);
+        box-shadow: inset 0 0 0 1px var(--border);
       }
 
       button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
+        box-shadow: none;
       }
 
       label {
         display: block;
         font-size: 12px;
         margin-bottom: 6px;
-        color: #3b4046;
+        color: var(--muted);
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
       }
 
       input,
-      select {
+      select,
+      textarea {
         width: 100%;
-        padding: 8px 10px;
-        border-radius: 6px;
-        border: 1px solid #c9c9c3;
-        background: #ffffff;
+        padding: 10px 12px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
         font-size: 13px;
         box-sizing: border-box;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        transition: border-color 0.16s ease, box-shadow 0.16s ease;
       }
 
       .field {
-        margin-bottom: 12px;
+        margin-bottom: 14px;
       }
 
       .row {
@@ -118,25 +230,32 @@
 
       .muted {
         font-size: 11px;
-        color: #6f7680;
+        color: var(--muted);
       }
 
       .status {
         font-size: 12px;
-        color: #3b4046;
+        color: var(--muted);
+        background: var(--surface-alt);
+        padding: 4px 10px;
+        border-radius: 999px;
       }
 
       .result {
-        border: 1px solid #c9c9c3;
-        background: #ffffff;
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 12px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        padding: 14px;
+        border-radius: var(--radius-md);
+        margin-bottom: 14px;
+        box-shadow: var(--shadow-soft);
       }
 
       .result h2 {
         margin: 0 0 8px;
-        font-size: 14px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--muted);
       }
 
       .result-title {
@@ -148,14 +267,14 @@
       .preview {
         white-space: pre-wrap;
         font-size: 12px;
-        color: #3b4046;
+        color: var(--muted);
       }
 
       .snippets {
         margin: 8px 0 0 18px;
         padding: 0;
         font-size: 12px;
-        color: #3b4046;
+        color: var(--muted);
       }
 
       .snippets li {
@@ -164,22 +283,99 @@
 
       .warning {
         font-size: 11px;
-        color: #7a4b2a;
-        background: #fff2e8;
-        padding: 8px 10px;
-        border-radius: 6px;
+        color: var(--warning-text);
+        background: var(--warning-bg);
+        padding: 10px 12px;
+        border-radius: var(--radius-sm);
         margin-bottom: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        border-left: 3px solid var(--warning-text);
+      }
+
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        filter: brightness(1.03);
+      }
+
+      button:active:not(:disabled) {
+        transform: translateY(0);
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: none;
+        box-shadow: var(--focus-ring);
+        border-color: var(--accent);
+      }
+
+      .panel.active > * {
+        animation: riseIn 0.45s ease both;
+      }
+
+      .panel.active > *:nth-child(1) {
+        animation-delay: 0.02s;
+      }
+
+      .panel.active > *:nth-child(2) {
+        animation-delay: 0.06s;
+      }
+
+      .panel.active > *:nth-child(3) {
+        animation-delay: 0.1s;
+      }
+
+      .panel.active > *:nth-child(4) {
+        animation-delay: 0.14s;
+      }
+
+      .panel.active > *:nth-child(5) {
+        animation-delay: 0.18s;
+      }
+
+      .panel.active > *:nth-child(6) {
+        animation-delay: 0.22s;
+      }
+
+      @keyframes panelIn {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes riseIn {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
     </style>
   </head>
   <body>
-    <header>WeThink Side Panel</header>
-    <div class="tabs">
-      <button class="tab active" data-tab="chat">Chat/Summary</button>
-      <button class="tab" data-tab="settings">Settings</button>
-    </div>
+    <header>
+      <div class="brand">
+        <span>WeThink</span>
+        <span class="brand-badge">Side Panel</span>
+      </div>
+      <span class="header-sub">Focus + summarize</span>
+    </header>
+    <div class="shell">
+      <div class="tabs">
+        <button class="tab active" data-tab="chat">Chat/Summary</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </div>
 
-    <section class="panel active" id="panel-chat">
+      <section class="panel active" id="panel-chat">
       <div class="actions">
         <button id="extractBtn">Extract Page</button>
         <span class="status" id="statusLine">Ready.</span>
@@ -199,8 +395,31 @@
         </div>
       </div>
 
+      <div class="field">
+        <label for="contentSource">Content source</label>
+        <select id="contentSource">
+          <option value="page">Full Page</option>
+          <option value="selection">Selection</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="selectionText">Selection</label>
+        <div class="actions">
+          <button class="secondary" id="useSelection">Use Selection</button>
+        </div>
+        <div class="warning" id="selectionWarning" hidden>
+          Select text on the page first.
+        </div>
+        <textarea id="selectionText" rows="3" readonly></textarea>
+      </div>
+
       <div class="warning" id="providerWarning">
         Page content will be sent to Gemini.
+      </div>
+
+      <div class="warning" id="truncationWarning" hidden>
+        Page content was truncated; summary may miss later sections.
       </div>
 
       <div class="result">
@@ -211,6 +430,12 @@
 
       <div class="result">
         <h2>LLM response</h2>
+        <div class="actions">
+          <button class="secondary" id="copySummary">Copy summary</button>
+          <span class="muted" id="copySummaryStatus" hidden>Copied!</span>
+          <button class="secondary" id="copySnippets">Copy snippets</button>
+          <span class="muted" id="copySnippetsStatus" hidden>Copied!</span>
+        </div>
         <div class="preview" id="llmResultText">No response yet.</div>
         <details class="muted" id="llmDebug" hidden>
           <summary>Provider details</summary>
@@ -218,9 +443,21 @@
         </details>
         <ul class="snippets" id="snippetList"></ul>
       </div>
-    </section>
+      </section>
 
-    <section class="panel" id="panel-settings">
+      <section class="panel" id="panel-settings">
+      <div class="warning" id="apiKeyWarning" hidden>
+        Please set your API key in Settings
+      </div>
+
+      <div class="field">
+        <label for="autoSelectionEnabled">Auto selection capture</label>
+        <select id="autoSelectionEnabled">
+          <option value="on">Enabled</option>
+          <option value="off">Disabled</option>
+        </select>
+      </div>
+
       <div class="field">
         <label for="providerSelect">Active provider</label>
         <select id="providerSelect">
@@ -260,7 +497,8 @@
         <button id="saveSettings">Save Settings</button>
         <span class="status" id="settingsStatus">Waiting for changes.</span>
       </div>
-    </section>
+      </section>
+    </div>
 
     <script src="sidepanel.js"></script>
   </body>

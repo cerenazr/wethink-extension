@@ -7,6 +7,12 @@ const resultPreview = document.getElementById("resultPreview");
 const llmResultText = document.getElementById("llmResultText");
 const snippetList = document.getElementById("snippetList");
 const providerWarning = document.getElementById("providerWarning");
+const apiKeyWarning = document.getElementById("apiKeyWarning");
+const truncationWarning = document.getElementById("truncationWarning");
+const copySummaryBtn = document.getElementById("copySummary");
+const copySnippetsBtn = document.getElementById("copySnippets");
+const copySummaryStatus = document.getElementById("copySummaryStatus");
+const copySnippetsStatus = document.getElementById("copySnippetsStatus");
 const llmDebug = document.getElementById("llmDebug");
 const llmDebugText = document.getElementById("llmDebugText");
 
@@ -15,6 +21,11 @@ const summaryMediumBtn = document.getElementById("summaryMedium");
 const summaryDetailedBtn = document.getElementById("summaryDetailed");
 const qaInput = document.getElementById("qaInput");
 const qaSendBtn = document.getElementById("qaSend");
+const contentSourceSelect = document.getElementById("contentSource");
+const useSelectionBtn = document.getElementById("useSelection");
+const selectionTextArea = document.getElementById("selectionText");
+const selectionWarning = document.getElementById("selectionWarning");
+const autoSelectionSelect = document.getElementById("autoSelectionEnabled");
 
 const providerSelect = document.getElementById("providerSelect");
 const geminiKeyInput = document.getElementById("geminiKey");
@@ -37,6 +48,10 @@ const STATE = {
 let llmPending = false;
 let currentState = STATE.ready;
 let errorTimeoutId = null;
+let apiKeyWarningActive = false;
+let currentSettings = {};
+let copyStatusTimeoutId = null;
+let lastExtractedPage = null;
 
 const STATUS_TEXT = {
   ready: "Ready.",
@@ -66,6 +81,15 @@ function setState(nextState) {
   statusLine.textContent = STATUS_TEXT[nextState] || STATUS_TEXT.ready;
 }
 
+function setProgress(message) {
+  if (errorTimeoutId) {
+    clearTimeout(errorTimeoutId);
+    errorTimeoutId = null;
+  }
+  currentState = STATE.calling;
+  statusLine.textContent = message || STATUS_TEXT.calling;
+}
+
 function showError(message) {
   if (errorTimeoutId) {
     clearTimeout(errorTimeoutId);
@@ -90,10 +114,112 @@ function setSettingsStatus(text) {
   settingsStatus.textContent = text;
 }
 
+function showSelectionWarning(message) {
+  if (!selectionWarning) {
+    return;
+  }
+  selectionWarning.textContent = message;
+  selectionWarning.hidden = false;
+}
+
+function hideSelectionWarning() {
+  if (!selectionWarning) {
+    return;
+  }
+  selectionWarning.hidden = true;
+}
+
+function showCopyStatus(target) {
+  if (!target) {
+    return;
+  }
+  if (copyStatusTimeoutId) {
+    clearTimeout(copyStatusTimeoutId);
+  }
+  target.hidden = false;
+  copyStatusTimeoutId = setTimeout(() => {
+    target.hidden = true;
+  }, 1500);
+}
+
+async function copyTextToClipboard(text) {
+  if (!text) {
+    return false;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      // Fall through to legacy copy method.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  let success = false;
+  try {
+    success = document.execCommand("copy");
+  } catch (_) {
+    success = false;
+  }
+  document.body.removeChild(textarea);
+  return success;
+}
+
+function hasKeyForProvider(provider) {
+  if (provider === "claude") {
+    return Boolean(currentSettings.claudeKey);
+  }
+  return Boolean(currentSettings.geminiKey);
+}
+
+function showApiKeyWarning() {
+  apiKeyWarningActive = true;
+  if (!apiKeyWarning) {
+    return;
+  }
+  apiKeyWarning.textContent = "Please set your API key in Settings";
+  apiKeyWarning.hidden = false;
+}
+
+function hideApiKeyWarning() {
+  apiKeyWarningActive = false;
+  if (!apiKeyWarning) {
+    return;
+  }
+  apiKeyWarning.hidden = true;
+}
+
+function refreshApiKeyWarning() {
+  if (!apiKeyWarning || !apiKeyWarningActive) {
+    return;
+  }
+  if (hasKeyForProvider(providerSelect.value)) {
+    hideApiKeyWarning();
+    return;
+  }
+  apiKeyWarning.textContent = "Please set your API key in Settings";
+  apiKeyWarning.hidden = false;
+}
+
 function updateExtractResult(page) {
+  lastExtractedPage = page;
   resultTitle.textContent = page.title || "Untitled page";
   const preview = page.textContent ? page.textContent.slice(0, 500) : "";
   resultPreview.textContent = preview || "No preview available.";
+  setTruncationWarning(Boolean(page.truncated));
+}
+
+function setTruncationWarning(isTruncated) {
+  if (!truncationWarning) {
+    return;
+  }
+  truncationWarning.hidden = !isTruncated;
 }
 
 function clearLlmOutput() {
@@ -149,6 +275,14 @@ function updateProviderWarning() {
 }
 
 function updateSettingsUI(settings) {
+  currentSettings = { ...currentSettings, ...settings };
+  if (autoSelectionSelect) {
+    const enabled =
+      typeof settings.autoSelectionEnabled === "boolean"
+        ? settings.autoSelectionEnabled
+        : true;
+    autoSelectionSelect.value = enabled ? "on" : "off";
+  }
   providerSelect.value = settings.activeProvider || "gemini";
   summarySelect.value = settings.summaryDefault || "short";
 
@@ -157,14 +291,31 @@ function updateSettingsUI(settings) {
   geminiKeyStatus.textContent = hasGeminiKey ? "Stored." : "Not set.";
   claudeKeyStatus.textContent = hasClaudeKey ? "Stored." : "Not set.";
   updateProviderWarning();
+  refreshApiKeyWarning();
 }
 
 function startLlmRequest(payload) {
-  if (currentState === STATE.extracting || currentState === STATE.calling) {
-    return;
+  if (!hasKeyForProvider(providerSelect.value)) {
+    showApiKeyWarning();
+    setActiveTab("settings");
+    setSettingsStatus("Please set your API key.");
+    return false;
   }
-  llmPending = true;
-  setState(STATE.extracting);
+  const source = contentSourceSelect ? contentSourceSelect.value : "page";
+  const selectionText = selectionTextArea ? selectionTextArea.value.trim() : "";
+  if (source === "selection") {
+    if (!selectionText) {
+      showSelectionWarning("Select text on the page first.");
+      return false;
+    }
+  } else {
+    hideSelectionWarning();
+  }
+  if (currentState === STATE.extracting || currentState === STATE.calling) {
+    return false;
+  }
+  llmPending = source !== "selection";
+  setState(source === "selection" ? STATE.calling : STATE.extracting);
   setActionsDisabled(true);
   llmResultText.textContent = "Waiting for response...";
   renderSnippets([]);
@@ -172,8 +323,13 @@ function startLlmRequest(payload) {
   chrome.runtime.sendMessage({
     type: "LLM_REQUEST",
     provider: providerSelect.value,
+    source,
+    selectionText: source === "selection" ? selectionText : undefined,
+    title: source === "selection" && lastExtractedPage ? lastExtractedPage.title : undefined,
+    url: source === "selection" && lastExtractedPage ? lastExtractedPage.url : undefined,
     ...payload
   });
+  return true;
 }
 
 function handleRuntimeMessage(message) {
@@ -203,6 +359,7 @@ function handleRuntimeMessage(message) {
   if (message.type === "EXTRACT_ERROR") {
     const wasPending = llmPending;
     showError(message.message || "Extraction failed.");
+    setTruncationWarning(false);
     llmPending = false;
     if (wasPending) {
       clearDebug();
@@ -217,6 +374,26 @@ function handleRuntimeMessage(message) {
     llmPending = false;
     setState(STATE.ready);
     setActionsDisabled(false);
+    return;
+  }
+
+  if (message.type === "LLM_PROGRESS") {
+    setProgress(message.message || "Summarizing...");
+    return;
+  }
+
+  if (message.type === "WETHINK_SELECTION_CHANGED") {
+    if (autoSelectionSelect && autoSelectionSelect.value !== "on") {
+      return;
+    }
+    const selectionText = (message.selectionText || "").trim();
+    if (!selectionText) {
+      return;
+    }
+    if (selectionTextArea) {
+      selectionTextArea.value = selectionText;
+    }
+    hideSelectionWarning();
     return;
   }
 
@@ -240,6 +417,7 @@ tabButtons.forEach((button) => {
 
 providerSelect.addEventListener("change", () => {
   updateProviderWarning();
+  refreshApiKeyWarning();
 });
 
 extractBtn.addEventListener("click", () => {
@@ -249,8 +427,9 @@ extractBtn.addEventListener("click", () => {
   llmPending = false;
   setState(STATE.extracting);
   setActionsDisabled(true);
+  setTruncationWarning(false);
   clearDebug();
-  chrome.runtime.sendMessage({ type: "EXTRACT_CONTENT" });
+  chrome.runtime.sendMessage({ type: "EXTRACT_CONTENT", force: true });
 });
 
 summaryShortBtn.addEventListener("click", () => {
@@ -271,14 +450,54 @@ qaSendBtn.addEventListener("click", () => {
     showError("Enter a question.");
     return;
   }
-  qaInput.value = "";
-  startLlmRequest({ mode: "qa", userQuery: query });
+  if (startLlmRequest({ mode: "qa", userQuery: query })) {
+    qaInput.value = "";
+  }
+});
+
+copySummaryBtn.addEventListener("click", async () => {
+  const text = llmResultText.textContent || "";
+  const ok = await copyTextToClipboard(text);
+  if (ok) {
+    showCopyStatus(copySummaryStatus);
+  }
+});
+
+copySnippetsBtn.addEventListener("click", async () => {
+  const snippets = Array.from(snippetList.querySelectorAll("li"))
+    .map((item) => item.textContent || "")
+    .filter(Boolean)
+    .join("\n");
+  const ok = await copyTextToClipboard(snippets);
+  if (ok) {
+    showCopyStatus(copySnippetsStatus);
+  }
+});
+
+useSelectionBtn.addEventListener("click", () => {
+  hideSelectionWarning();
+  chrome.runtime.sendMessage({ type: "WETHINK_FETCH_SELECTION" }, (response) => {
+    const runtimeError = chrome.runtime.lastError;
+    const selectionText = response && response.selectionText ? response.selectionText : "";
+    if (selectionTextArea) {
+      selectionTextArea.value = selectionText;
+    }
+    if (runtimeError) {
+      showSelectionWarning("Select text on the page first.");
+      return;
+    }
+    if (!selectionText) {
+      showSelectionWarning("Select text on the page first.");
+      return;
+    }
+  });
 });
 
 saveSettingsBtn.addEventListener("click", () => {
   const settings = {
     activeProvider: providerSelect.value,
-    summaryDefault: summarySelect.value
+    summaryDefault: summarySelect.value,
+    autoSelectionEnabled: autoSelectionSelect ? autoSelectionSelect.value === "on" : true
   };
 
   if (geminiKeyInput.value.trim()) {

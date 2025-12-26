@@ -36,8 +36,41 @@
     return (hash >>> 0).toString(16).padStart(8, "0");
   }
 
+  let selectionTimer = null;
+  let lastSelectionText = "";
+
+  function getSelectionText() {
+    const selection = window.getSelection();
+    return selection ? selection.toString().trim() : "";
+  }
+
+  function notifySelectionChange() {
+    const selectionText = getSelectionText();
+    if (!selectionText || selectionText === lastSelectionText) {
+      return;
+    }
+    lastSelectionText = selectionText;
+    chrome.runtime.sendMessage({ type: "WETHINK_SELECTION_CHANGED", selectionText });
+  }
+
+  document.addEventListener("selectionchange", () => {
+    if (selectionTimer) {
+      clearTimeout(selectionTimer);
+    }
+    selectionTimer = setTimeout(notifySelectionChange, 250);
+  });
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || message.type !== "EXTRACT_CONTENT") {
+    if (!message || !message.type) {
+      return;
+    }
+
+    if (message.type === "WETHINK_GET_SELECTION") {
+      sendResponse({ selectionText: getSelectionText() });
+      return;
+    }
+
+    if (message.type !== "EXTRACT_CONTENT") {
       return;
     }
 
